@@ -1,0 +1,206 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This time, see several previous examples with regularization and ensemble methods.
+```{r}
+insurance <- read.csv("/Users/apple/Desktop/projects/ML Assignment 5/insurance.csv", stringsAsFactors = TRUE)
+str(insurance)
+```
+```{r}
+#split data to train/test
+library(caret)
+train.index=createDataPartition(insurance$expenses,p = 0.8, list = FALSE)
+insurance_train=insurance[train.index, ]
+insurance_test <- insurance[-train.index, ]
+```
+
+The glmnet package by default standardize the data so we don’t have to do it manually here. Lasso by setting alpha = 1;
+
+```{r}
+set.seed(1)
+lasso <- train(
+  expenses ~., data = insurance_train, method = "glmnet",
+  trControl = trainControl("cv", number = 10),
+  tuneGrid = expand.grid(alpha = 1, lambda = 10^seq(-3, 3, length = 100)))  
+```
+
+```{r}
+lasso$bestTune
+```
+The best hyper-parameter (lambda) is the one which yields the lowest cross-validation error
+We can get the predictions for the test data from the best tuned model and compute RMSE
+```{r}
+predictions <- predict(lasso,insurance_test)
+RMSE(predictions, insurance_test$expenses)
+```
+
+```{r}
+coef(lasso$finalModel, lasso$bestTune$lambda)
+```
+If you compare the coefficients of regular regression in the week 7 code demo. The coef values shown here is much lower because LASSO penalizes large coefficients. Note that the coefficient for regionwest is exactly zero and this variable is not used for prediction.
+
+To do Ridge we set alpha=0 . The rest would be similar to LASSO.
+```{r}
+set.seed(1)
+ridge <- train(
+  expenses ~., data = insurance_train, method = "glmnet",
+  trControl = trainControl("cv", number = 10),
+  tuneGrid = expand.grid(alpha = 0, lambda = 10^seq(-3, 3, length = 100)))
+predictions <- predict(ridge,insurance_test)
+RMSE(predictions, insurance_test$expenses)
+
+```
+
+To do elastic net we tune both alpha and lambda.
+
+```{r}
+set.seed(1)
+enet <- train(
+  expenses ~., data = insurance_train, method = "glmnet",
+  trControl = trainControl("cv", number = 10),
+  tuneGrid = expand.grid(alpha =seq(0,1, length=10), lambda = 10^seq(-3, 3, length = 100)))
+predictions <- predict(enet,insurance_test)
+RMSE(predictions, insurance_test$expenses)
+```
+
+
+We can use resamples method in caret to compare tuned ML models. "resamples" method gives a distribution of the performance measures across folds in cross validation for each tuned model.
+
+Make sure to set the seed before training each model to ensure that same folds are chosen to train each model using “train” method in caret. Compare their performance using “resamples” function.
+```{r}
+compare=resamples(list(L=lasso,R=ridge,E=enet))
+summary(compare)
+```
+
+Regularized Logistic Regression
+
+```{r}
+wbcd=read.csv("/Users/apple/Desktop/projects/ML Assignment 5/wisc_bc_data.csv")
+wbcd=wbcd[-1] # remove the first column of patientID, not relevant.
+wbcd$diagnosis<- factor(wbcd$diagnosis, levels = c("B", "M"), labels = c("Benign", "Malignant"))
+train.index=createDataPartition(wbcd$diagnosis,p = 0.8, list = FALSE)
+wbcd_train=wbcd[train.index, ]
+wbcd_test <- wbcd[-train.index, ]
+```
+
+LASSO Logistic Regression by setting alpha=1.
+```{r}
+lasso <- train(diagnosis~., data = wbcd_train, method = "glmnet",
+    trControl = trainControl("cv", number = 10),
+    tuneGrid = expand.grid(alpha = 1, lambda = 10^seq(-3, 3, length = 100)))
+```
+
+
+```{r}
+
+lasso_predictions=predict(lasso, wbcd_test)
+confusionMatrix(lasso_predictions,wbcd_test$diagnosis)
+```
+
+As shown, LASSO pushed the coefficients of several variables to zero; hence, not using them in predicting the target (diagnosis)
+```{r}
+coef(lasso$finalModel, lasso$bestTune$lambda)
+```
+
+Ridge Logistic Regression by setting alpha = 0.
+```{r}
+set.seed(1)
+ridge <- train(diagnosis~., data = wbcd_train, method = "glmnet",
+    trControl = trainControl("cv", number = 10),
+    tuneGrid = expand.grid(alpha = 0, lambda = 10^seq(-3, 3, length = 100)))
+```
+
+```{r}
+ridge_predictions=predict(ridge, wbcd_test)
+confusionMatrix(ridge_predictions,wbcd_test$diagnosis)
+```
+
+Elastic NET Logistic Regression by varying alpha.
+
+```{r}
+set.seed(1)
+enet <- train(diagnosis ~., data = wbcd_train, method = "glmnet",
+     trControl = trainControl("cv", number = 10),
+     tuneGrid = expand.grid(alpha =seq(0,1, length=10), lambda = 10^seq(-3, 3, length = 100)))
+
+```
+
+```{r}
+enet_predictions=predict(enet, wbcd_test)
+confusionMatrix(enet_predictions,wbcd_test$diagnosis)
+```
+
+Classical bagged tree - random forest - version 1
+```{r}
+credit <- read.csv("/Users/apple/Desktop/projects/ML Assignment 5/credit.csv")
+credit_train.index=createDataPartition(credit$default,p = 0.8, list = FALSE)
+credit_train=credit[credit_train.index, ]
+credit_test <- credit[-credit_train.index, ]
+set.seed(1)
+mybag=train(default ~ ., data = credit_train, method = "treebag", nbagg=30,trControl = trainControl(method="cv", number=10))
+mybag
+```
+```{r}
+credit_test$default <- factor(credit_test$default)
+mybag_predictions=predict(mybag, credit_test)
+confusionMatrix(mybag_predictions,credit_test$default)
+```
+
+Random forest - version 2
+
+```{r}
+library(caret)
+ctrl <- trainControl(method = "cv", number = 10)
+grid_rf <- expand.grid(mtry = c(2, 4, 8, 16))
+set.seed(2024)
+m_rf <- train(default ~ ., data = credit_train, method = "rf", trControl = ctrl, tuneGrid = grid_rf) # take some time
+m_rf
+```
+```{r}
+rf_predictions_binary=predict(m_rf, credit_test)
+table(rf_predictions_binary, credit_test$default)
+```
+
+Caret package has a “varImp” function which can be used to give the variable importance rankings for randomForest. 
+
+In the case of bagging regression trees, we can record the total amount that the mean squared error is decreased due to splits over a given predictor, averaged over all trees that use that  split on that predictor. 
+Similarly, in the context of bagging classification trees, we can add up the total amount that the node impurity is decreased by splits over a given predictor, averaged over all trees that split on that predictor.
+
+
+```{r}
+varImp(m_rf)
+```
+Adaboost
+
+```{r}
+library(devtools)
+devtools::install_github("souravc83/fastAdaboost")
+set.seed(1)
+ada<- train(
+    default~., data=credit_train,method = "adaboost",
+    trControl = trainControl("cv", number = 10)) # Take 5~10 mins
+ada
+```
+
+```{r}
+ada_predictions_binary=predict(ada, credit_test)
+table(ada_predictions_binary, credit_test$default)
+```
+Gradient boosting: The two hyper-parameters that are auto-tuned are 1- n.trees which is the number of trees (i.e., iterations) and 2- interaction.depth which is the number of splits in each tree.
+
+```{r}
+set.seed(1)
+gbm <- train(
+    default ~., data = credit_train, method = "gbm",
+    trControl = trainControl("cv", number = 10))
+gbm
+```
+
+```{r}
+gbm_predictions_binary=predict(gbm, credit_test)
+table(gbm_predictions_binary, credit_test$default)
+```
+
+
